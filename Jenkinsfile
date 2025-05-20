@@ -115,6 +115,10 @@ pipeline {
                     
                     // Process each service
                     def changedServicesList = env.CHANGED_SERVICES.split(" ")
+                    
+                    // Tạo một list JSON để lưu các service và tag
+                    def serviceTagList = []
+                    
                     for (service in changedServicesList) {
                         echo "Processing ${service}..."
                         
@@ -157,14 +161,37 @@ pipeline {
                             sh "docker push ${DOCKER_HUB_USERNAME}/${service}:latest"
                         }
                         
-                        // Trigger Helm update
-                        build job: 'k8s_update_helm', parameters: [
-                            string(name: 'SERVICE_NAME', value: service),
-                            string(name: 'IMAGE_TAG', value: imageTag)
-                        ], wait: false
+                        // Lưu service và tag để update Helm sau
+                        serviceTagList.add([service: service, tag: imageTag])
                         
                         echo "Successfully processed ${service}"
                     }
+                    
+                    // Lưu danh sách service và tag để sử dụng ở stage tiếp theo
+                    env.SERVICE_TAG_JSON = groovy.json.JsonOutput.toJson(serviceTagList)
+                }
+            }
+        }
+        
+        stage('Update Helm Charts') {
+            steps {
+                script {
+                    // Parse JSON string to list
+                    def serviceTagList = readJSON text: env.SERVICE_TAG_JSON
+                    
+                    echo "Updating Helm charts for all processed services"
+                    
+                    // Tạo một parameter đặc biệt để update tất cả cùng lúc
+                    def allServiceParam = serviceTagList.collect { it.service }.join(',')
+                    def allTagParam = serviceTagList.collect { it.tag }.join(',')
+                    
+                    // Trigger job update helm với tất cả service và tag
+                    build job: 'k8s_update_helm', parameters: [
+                        string(name: 'SERVICE_NAMES', value: allServiceParam),
+                        string(name: 'IMAGE_TAGS', value: allTagParam)
+                    ]
+                    
+                    echo "Successfully triggered Helm update for all services"
                 }
             }
         }
