@@ -78,9 +78,11 @@ pipeline {
         stage('Build and Push Images') {
             steps {
                 script {
-                    // Login Docker Hub một lần (sử dụng cách an toàn hơn)
-                    withCredentials([string(credentialsId: 'dockerhub', variable: 'DOCKER_PWD')]) {
-                        sh 'echo $DOCKER_PWD | docker login -u ${DOCKER_HUB_USERNAME} --password-stdin'
+                    // Login Docker Hub - SỬA CÁCH SỬ DỤNG CREDENTIALS
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub', 
+                                                     usernameVariable: 'DOCKER_USER', 
+                                                     passwordVariable: 'DOCKER_PWD')]) {
+                        sh 'echo $DOCKER_PWD | docker login -u $DOCKER_USER --password-stdin'
                     }
                     
                     // Lấy danh sách các service đã thay đổi
@@ -105,7 +107,7 @@ pipeline {
                         // Push image
                         sh "docker push ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
                         
-                        // Trigger Helm update cho mỗi service - ĐÃ SỬA TÊN JOB
+                        // Trigger Helm update cho mỗi service
                         build job: 'k8s_update_helm', parameters: [
                             string(name: 'SERVICE_NAME', value: service),
                             string(name: 'IMAGE_TAG', value: imageTag)
