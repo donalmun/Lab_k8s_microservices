@@ -41,13 +41,9 @@ pipeline {
                         }
                     }
                     
-                    // Nếu vẫn không tìm thấy service, dùng tất cả với tag latest
+                    // Nếu vẫn không tìm thấy service nào, báo lỗi
                     if (env.CHANGED_SERVICES.trim() == "") {
-                        echo "No specific service detected, using ALL services with tag 'latest'"
-                        env.CHANGED_SERVICES = services.join(" ")
-                        env.USE_LATEST_TAG = "true"
-                    } else {
-                        env.USE_LATEST_TAG = "false"
+                        error "Could not determine which service(s) changed. Please include service name in branch name or modify specific service files."
                     }
                     
                     echo "Will build images for: ${env.CHANGED_SERVICES}"
@@ -55,59 +51,48 @@ pipeline {
             }
         }
         
-        stage('Check Docker') {
+        stage('Build and Push Docker Images') {
             steps {
                 script {
-                    def dockerExists = sh(script: "which docker || true", returnStdout: true).trim()
-                    if (dockerExists == "") {
-                        error "Docker is not installed on this node. Please install Docker first."
-                    } else {
-                        def dockerVersion = sh(script: "docker --version", returnStdout: true).trim()
-                        echo "Docker is installed: ${dockerVersion}"
-                        
-                        // Kiểm tra quyền chạy docker
-                        def canRunDocker = sh(script: "docker ps >/dev/null 2>&1 && echo 'yes' || echo 'no'", returnStdout: true).trim()
-                        if (canRunDocker == "no") {
-                            error "Docker is installed but current user cannot access it. Add user to docker group."
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('Build and Push Images') {
-            steps {
-                script {
-                    // Login Docker Hub - SỬA CÁCH SỬ DỤNG CREDENTIALS
+                    // Login to Docker Hub
                     withCredentials([usernamePassword(credentialsId: 'dockerhub', 
                                                      usernameVariable: 'DOCKER_USER', 
                                                      passwordVariable: 'DOCKER_PWD')]) {
                         sh 'echo $DOCKER_PWD | docker login -u $DOCKER_USER --password-stdin'
                     }
                     
-                    // Lấy danh sách các service đã thay đổi
+                    // Process each service
                     def changedServicesList = env.CHANGED_SERVICES.split(" ")
-                    
-                    // Build và push image cho từng service
                     for (service in changedServicesList) {
                         echo "Processing ${service}..."
                         
-                        // Quyết định tag
-                        def imageTag = env.USE_LATEST_TAG == "true" ? "latest" : "${GIT_COMMIT_SHORT}"
+                        // Luôn sử dụng commit ID làm tag (theo yêu cầu)
+                        def imageTag = "${GIT_COMMIT_SHORT}"
                         
-                        // Build image từ Dockerfile chung, chỉ định SERVICE_NAME
-                        sh """
-                            docker build \\
-                                -t ${DOCKER_HUB_USERNAME}/${service}:${imageTag} \\
-                                -f docker/Dockerfile \\
-                                --build-arg SERVICE_NAME=${service} \\
-                                .
-                        """
+                        // Branch main cũng cần tag latest
+                        def branchName = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+                        def needsLatestTag = (branchName == 'main')
                         
-                        // Push image
+                        // Pull image gốc (đơn giản nhất)
+                        sh "docker pull springcommunity/spring-petclinic-${service}"
+                        
+                        // Tag với tên đơn giản và commit ID
+                        sh "docker tag springcommunity/spring-petclinic-${service} ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
+                        
+                        // Nếu là branch main, tag thêm latest
+                        if (needsLatestTag) {
+                            sh "docker tag springcommunity/spring-petclinic-${service} ${DOCKER_HUB_USERNAME}/${service}:latest"
+                        }
+                        
+                        // Push image với tag commit ID
                         sh "docker push ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
                         
-                        // Trigger Helm update cho mỗi service
+                        // Push image với tag latest nếu cần
+                        if (needsLatestTag) {
+                            sh "docker push ${DOCKER_HUB_USERNAME}/${service}:latest"
+                        }
+                        
+                        // Trigger Helm update
                         build job: 'k8s_update_helm', parameters: [
                             string(name: 'SERVICE_NAME', value: service),
                             string(name: 'IMAGE_TAG', value: imageTag)
@@ -122,7 +107,7 @@ pipeline {
     
     post {
         always {
-            sh "docker logout || true"  // Thêm || true để tránh lỗi nếu docker chưa login
+            sh "docker logout || true"
         }
         success {
             echo "Successfully built and pushed images for: ${env.CHANGED_SERVICES}"
