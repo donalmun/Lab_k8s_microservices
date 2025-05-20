@@ -45,9 +45,49 @@ pipeline {
                     if (env.CHANGED_SERVICES.trim() == "") {
                         echo "No specific service detected, using ALL services with commit tag ${GIT_COMMIT_SHORT}"
                         env.CHANGED_SERVICES = services.join(" ")
+                        env.BUILD_ALL = "true"
+                    } else {
+                        env.BUILD_ALL = "false"
                     }
                     
                     echo "Will build images for: ${env.CHANGED_SERVICES}"
+                }
+            }
+        }
+        
+        stage('Build Services') {
+            steps {
+                script {
+                    // Maps services to their ports
+                    def servicePorts = [
+                        'admin-server': '9090',
+                        'api-gateway': '8080',
+                        'config-server': '8888',
+                        'customers-service': '8081',
+                        'discovery-server': '8761',
+                        'vets-service': '8083',
+                        'visits-service': '8082'
+                    ]
+                    
+                    def changedServicesList = env.CHANGED_SERVICES.split(" ")
+                    
+                    // Nếu có thay đổi cụ thể, build từ source
+                    if (env.BUILD_ALL != "true") {
+                        for (service in changedServicesList) {
+                            echo "Building ${service} from source..."
+                            
+                            // Compile service with Maven
+                            dir(service) {
+                                sh "./mvnw clean package -DskipTests"
+                            }
+                            
+                            // Find JAR file
+                            def jarFile = sh(script: "find ${service}/target -name '*.jar' | head -1", returnStdout: true).trim()
+                            
+                            // Copy to root with simple name for Docker build
+                            sh "cp ${jarFile} ${service}.jar"
+                        }
+                    }
                 }
             }
         }
@@ -62,27 +102,51 @@ pipeline {
                         sh 'echo $DOCKER_PWD | docker login -u $DOCKER_USER --password-stdin'
                     }
                     
+                    // Service ports mapping
+                    def servicePorts = [
+                        'admin-server': '9090',
+                        'api-gateway': '8080',
+                        'config-server': '8888',
+                        'customers-service': '8081',
+                        'discovery-server': '8761',
+                        'vets-service': '8083',
+                        'visits-service': '8082'
+                    ]
+                    
                     // Process each service
                     def changedServicesList = env.CHANGED_SERVICES.split(" ")
                     for (service in changedServicesList) {
                         echo "Processing ${service}..."
                         
-                        // Luôn sử dụng commit ID làm tag (theo yêu cầu)
+                        // Tag là commit ID
                         def imageTag = "${GIT_COMMIT_SHORT}"
                         
                         // Branch main cũng cần tag latest
                         def branchName = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
                         def needsLatestTag = (branchName == 'main')
                         
-                        // Pull image gốc (đơn giản nhất)
-                        sh "docker pull springcommunity/spring-petclinic-${service}"
-                        
-                        // Tag với tên đơn giản và commit ID
-                        sh "docker tag springcommunity/spring-petclinic-${service} ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
+                        // Nếu có thay đổi cụ thể, build từ source với Dockerfile
+                        if (env.BUILD_ALL != "true") {
+                            def servicePort = servicePorts[service]
+                            
+                            // Build Docker image từ JAR file
+                            sh """
+                                docker build \\
+                                    -t ${DOCKER_HUB_USERNAME}/${service}:${imageTag} \\
+                                    -f docker/Dockerfile \\
+                                    --build-arg ARTIFACT_NAME=${service} \\
+                                    --build-arg EXPOSED_PORT=${servicePort} \\
+                                    .
+                            """
+                        } else {
+                            // Nếu không có thay đổi cụ thể, pull và tag
+                            sh "docker pull springcommunity/spring-petclinic-${service}"
+                            sh "docker tag springcommunity/spring-petclinic-${service} ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
+                        }
                         
                         // Nếu là branch main, tag thêm latest
                         if (needsLatestTag) {
-                            sh "docker tag springcommunity/spring-petclinic-${service} ${DOCKER_HUB_USERNAME}/${service}:latest"
+                            sh "docker tag ${DOCKER_HUB_USERNAME}/${service}:${imageTag} ${DOCKER_HUB_USERNAME}/${service}:latest"
                         }
                         
                         // Push image với tag commit ID
@@ -100,6 +164,19 @@ pipeline {
                         ], wait: false
                         
                         echo "Successfully processed ${service}"
+                    }
+                }
+            }
+        }
+        
+        stage('Cleanup') {
+            steps {
+                script {
+                    if (env.BUILD_ALL != "true") {
+                        def changedServicesList = env.CHANGED_SERVICES.split(" ")
+                        for (service in changedServicesList) {
+                            sh "rm -f ${service}.jar || true"
+                        }
                     }
                 }
             }
