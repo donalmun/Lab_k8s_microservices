@@ -181,13 +181,15 @@ pipeline {
                 script {
                     echo "Updating Helm charts for all processed services"
                     
-                    // Sử dụng biến môi trường đã lưu trước đó
-                    build job: 'k8s_update_helm', parameters: [
-                        string(name: 'SERVICE_NAMES', value: env.SERVICE_NAMES),
-                        string(name: 'IMAGE_TAGS', value: env.IMAGE_TAGS)
-                    ]
+                    // Kích hoạt job nhưng không chờ nó hoàn thành
+                    build job: 'k8s_update_helm', 
+                        wait: false,
+                        parameters: [
+                            string(name: 'SERVICE_NAMES', value: env.SERVICE_NAMES),
+                            string(name: 'IMAGE_TAGS', value: env.IMAGE_TAGS)
+                        ]
                     
-                    echo "Successfully triggered Helm update for all services"
+                    echo "Triggered Helm update job - continuing without waiting"
                 }
             }
         }
