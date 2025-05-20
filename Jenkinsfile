@@ -81,11 +81,16 @@ pipeline {
                                 sh "./mvnw clean package -DskipTests"
                             }
                             
-                            // Find JAR file
-                            def jarFile = sh(script: "find ${service}/target -name '*.jar' | head -1", returnStdout: true).trim()
+                            // Find JAR file - sử dụng đường dẫn tương đối
+                            def jarFile = sh(script: "find ${service}/target -name '*.jar' | grep -v original | head -1", returnStdout: true).trim()
                             
-                            // Copy to root with simple name for Docker build
-                            sh "cp ${jarFile} ${service}.jar"
+                            if (jarFile) {
+                                echo "Found JAR file: ${jarFile}"
+                                // Copy to root with simple name for Docker build
+                                sh "cp ${jarFile} ${service}.jar"
+                            } else {
+                                error "Could not find JAR file for ${service}. Build may have failed."
+                            }
                         }
                     }
                 }
@@ -245,6 +250,9 @@ pipeline {
         }
         success {
             echo "Successfully built and pushed images for: ${env.CHANGED_SERVICES}"
+        }
+        failure {
+            echo "Build failed. Check logs for details."
         }
     }
 }
