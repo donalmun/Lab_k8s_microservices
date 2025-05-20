@@ -144,9 +144,19 @@ pipeline {
                                     .
                             """
                         } else {
-                            // Nếu không có thay đổi cụ thể, pull và tag
-                            sh "docker pull springcommunity/spring-petclinic-${service}"
-                            sh "docker tag springcommunity/spring-petclinic-${service} ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
+                            // Thử pull từ Docker Hub cá nhân trước
+                            def pullResult = sh(script: "docker pull ${DOCKER_HUB_USERNAME}/${service}:latest || echo 'not_found'", returnStdout: true).trim()
+                            
+                            if (pullResult.contains('not_found')) {
+                                // Nếu không tìm thấy trong repo cá nhân, pull từ springcommunity
+                                echo "Image not found in personal repo, pulling from springcommunity"
+                                sh "docker pull springcommunity/spring-petclinic-${service}"
+                                sh "docker tag springcommunity/spring-petclinic-${service} ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
+                            } else {
+                                // Nếu tìm thấy trong repo cá nhân, tag lại với commit ID mới
+                                echo "Found existing image in personal repo, re-tagging"
+                                sh "docker tag ${DOCKER_HUB_USERNAME}/${service}:latest ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
+                            }
                         }
                         
                         // Nếu là branch main, tag thêm latest
@@ -179,17 +189,38 @@ pipeline {
         stage('Update Helm Charts') {
             steps {
                 script {
-                    echo "Updating Helm charts for all processed services"
+                    echo "Checking if there are services to update..."
                     
-                    // Kích hoạt job nhưng không chờ nó hoàn thành
-                    build job: 'k8s_update_helm', 
-                        wait: false,
-                        parameters: [
-                            string(name: 'SERVICE_NAMES', value: env.SERVICE_NAMES),
-                            string(name: 'IMAGE_TAGS', value: env.IMAGE_TAGS)
-                        ]
-                    
-                    echo "Triggered Helm update job - continuing without waiting"
+                    if (env.SERVICE_NAMES == null || env.SERVICE_NAMES.trim() == '') {
+                        echo "No services to update. Skipping Helm chart update."
+                    } else {
+                        def serviceNames = env.SERVICE_NAMES.split(',')
+                        def imageTags = env.IMAGE_TAGS.split(',')
+                        
+                        if (serviceNames.size() != imageTags.size()) {
+                            error "Mismatch between service names and image tags!"
+                        }
+                        
+                        echo "Validating services: ${env.SERVICE_NAMES}"
+                        echo "With tags: ${env.IMAGE_TAGS}"
+                        
+                        // Kiểm tra xem có service nào để cập nhật không
+                        if (serviceNames.size() > 0) {
+                            echo "Updating Helm charts for these services: ${env.SERVICE_NAMES}"
+                            
+                            // Kích hoạt job nhưng không chờ nó hoàn thành
+                            build job: 'k8s_update_helm', 
+                                wait: false,
+                                parameters: [
+                                    string(name: 'SERVICE_NAMES', value: env.SERVICE_NAMES),
+                                    string(name: 'IMAGE_TAGS', value: env.IMAGE_TAGS)
+                                ]
+                            
+                            echo "Triggered Helm update job - continuing without waiting"
+                        } else {
+                            echo "No services to update. Skipping Helm chart update."
+                        }
+                    }
                 }
             }
         }
