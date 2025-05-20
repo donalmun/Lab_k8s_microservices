@@ -1,10 +1,12 @@
 pipeline {
     agent any
+    
     environment {
         DOCKER_HUB_USERNAME = "donalmun"
         DOCKER_HUB_CREDS = credentials('dockerhub')
         GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
     }
+    
     stages {
         stage('Detect Changed Services') {
             steps {
@@ -35,11 +37,15 @@ pipeline {
                         }
                     }
                     
+                    // Nếu vẫn không tìm thấy service, dùng tất cả với tag latest
                     if (env.CHANGED_SERVICES.trim() == "") {
-                        error "Could not determine which service(s) changed"
+                        echo "No specific service detected, using ALL services with tag 'latest'"
+                        env.CHANGED_SERVICES = services.join(" ")
+                        env.USE_LATEST_TAG = "true"
+                    } else {
+                        env.USE_LATEST_TAG = "false"
                     }
                     
-                    env.CHANGED_SERVICES = env.CHANGED_SERVICES.trim()
                     echo "Will build images for: ${env.CHANGED_SERVICES}"
                 }
             }
@@ -48,6 +54,12 @@ pipeline {
         stage('Build and Push Images') {
             steps {
                 script {
+                    // Kiểm tra docker đã cài đặt chưa
+                    def dockerExists = sh(script: "which docker || true", returnStdout: true).trim()
+                    if (dockerExists == "") {
+                        error "Docker is not installed on this node. Please install Docker first."
+                    }
+                    
                     // Login Docker Hub một lần
                     sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_USERNAME} --password-stdin"
                     
@@ -58,18 +70,21 @@ pipeline {
                     for (service in changedServicesList) {
                         echo "Processing ${service}..."
                         
+                        // Quyết định tag
+                        def imageTag = env.USE_LATEST_TAG == "true" ? "latest" : "${GIT_COMMIT_SHORT}"
+                        
                         // Build image
                         dir(service) {
-                            sh "docker build -t ${DOCKER_HUB_USERNAME}/${service}:${GIT_COMMIT_SHORT} ."
+                            sh "docker build -t ${DOCKER_HUB_USERNAME}/${service}:${imageTag} ."
                         }
                         
                         // Push image
-                        sh "docker push ${DOCKER_HUB_USERNAME}/${service}:${GIT_COMMIT_SHORT}"
+                        sh "docker push ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
                         
                         // Trigger Helm update cho mỗi service
-                        build job: 'k8s_update_helm', parameters: [
+                        build job: 'update-helm-chart', parameters: [
                             string(name: 'SERVICE_NAME', value: service),
-                            string(name: 'IMAGE_TAG', value: "${GIT_COMMIT_SHORT}")
+                            string(name: 'IMAGE_TAG', value: imageTag)
                         ], wait: false
                         
                         echo "Successfully processed ${service}"
@@ -81,7 +96,7 @@ pipeline {
     
     post {
         always {
-            sh "docker logout"
+            sh "docker logout || true"  // Thêm || true để tránh lỗi nếu docker chưa login
         }
         success {
             echo "Successfully built and pushed images for: ${env.CHANGED_SERVICES}"
