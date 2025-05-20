@@ -78,24 +78,22 @@ pipeline {
                             echo "Building ${service} from source..."
                             
                             // Compile service with Maven
-                            dir(service) {
-                                sh "./mvnw clean package -DskipTests"
-                            }
+                            sh "./mvnw clean package -DskipTests"
                             
-                            // Tìm JAR file cụ thể hơn - đảm bảo đường dẫn tương đối chính xác
-                            sh """
-                                echo "Looking for JAR file in ${service}/target..."
-                                ls -la ${service}/target/*.jar || echo "No JAR files found"
-                            """
+                            // Tìm JAR file cụ thể hơn và kiểm tra nó có tồn tại không
+                            def jarPath = "${WORKSPACE}/${service}/target"
                             
-                            // Sử dụng cách tìm JAR khác, chỉ định đường dẫn chính xác hơn
-                            def jarPath = "${service}/target"
-                            def jarName = sh(script: "ls -1 ${jarPath}/${service}-*.jar 2>/dev/null | grep -v original || echo ''", returnStdout: true).trim()
+                            // Debug
+                            sh "echo 'Looking for JAR files in ${jarPath}...'"
+                            sh "ls -la ${jarPath}/*.jar || echo 'No JAR files found'"
                             
-                            if (jarName) {
-                                echo "Found JAR file: ${jarName}"
+                            // Tìm JAR file với tên cụ thể
+                            def jarFile = sh(script: "find ${jarPath} -name '${service}-*.jar' -not -name '*original*' | head -1", returnStdout: true).trim()
+                            
+                            if (jarFile) {
+                                echo "Found JAR file: ${jarFile}"
                                 // Copy to root with simple name for Docker build
-                                sh "cp ${jarName} ${service}.jar"
+                                sh "cp ${jarFile} ${service}.jar"
                             } else {
                                 error "Could not find JAR file for ${service}. Build may have failed."
                             }
