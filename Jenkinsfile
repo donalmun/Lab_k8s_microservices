@@ -1,7 +1,7 @@
 pipeline {
     agent {
         node {
-            label 'lab1_agent'
+            label 'k8s_master'
         }
     }
     
@@ -55,17 +55,33 @@ pipeline {
             }
         }
         
-        stage('Build and Push Images') {
+        stage('Check Docker') {
             steps {
                 script {
-                    // Kiểm tra docker đã cài đặt chưa
                     def dockerExists = sh(script: "which docker || true", returnStdout: true).trim()
                     if (dockerExists == "") {
                         error "Docker is not installed on this node. Please install Docker first."
+                    } else {
+                        def dockerVersion = sh(script: "docker --version", returnStdout: true).trim()
+                        echo "Docker is installed: ${dockerVersion}"
+                        
+                        // Kiểm tra quyền chạy docker
+                        def canRunDocker = sh(script: "docker ps >/dev/null 2>&1 && echo 'yes' || echo 'no'", returnStdout: true).trim()
+                        if (canRunDocker == "no") {
+                            error "Docker is installed but current user cannot access it. Add user to docker group."
+                        }
                     }
-                    
-                    // Login Docker Hub một lần
-                    sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_USERNAME} --password-stdin"
+                }
+            }
+        }
+        
+        stage('Build and Push Images') {
+            steps {
+                script {
+                    // Login Docker Hub một lần (sử dụng cách an toàn hơn)
+                    withCredentials([string(credentialsId: 'dockerhub', variable: 'DOCKER_PWD')]) {
+                        sh 'echo $DOCKER_PWD | docker login -u ${DOCKER_HUB_USERNAME} --password-stdin'
+                    }
                     
                     // Lấy danh sách các service đã thay đổi
                     def changedServicesList = env.CHANGED_SERVICES.split(" ")
@@ -77,16 +93,20 @@ pipeline {
                         // Quyết định tag
                         def imageTag = env.USE_LATEST_TAG == "true" ? "latest" : "${GIT_COMMIT_SHORT}"
                         
-                        // Build image
-                        dir(service) {
-                            sh "docker build -t ${DOCKER_HUB_USERNAME}/${service}:${imageTag} ."
-                        }
+                        // Build image từ Dockerfile chung, chỉ định SERVICE_NAME
+                        sh """
+                            docker build \\
+                                -t ${DOCKER_HUB_USERNAME}/${service}:${imageTag} \\
+                                -f docker/Dockerfile \\
+                                --build-arg SERVICE_NAME=${service} \\
+                                .
+                        """
                         
                         // Push image
                         sh "docker push ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
                         
-                        // Trigger Helm update cho mỗi service
-                        build job: 'update-helm-chart', parameters: [
+                        // Trigger Helm update cho mỗi service - ĐÃ SỬA TÊN JOB
+                        build job: 'k8s_update_helm', parameters: [
                             string(name: 'SERVICE_NAME', value: service),
                             string(name: 'IMAGE_TAG', value: imageTag)
                         ], wait: false
