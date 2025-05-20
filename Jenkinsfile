@@ -1,5 +1,9 @@
 pipeline {
-    agent any
+    agent {
+        node {
+            label 'lab1_agent'
+        }
+    }
     
     environment {
         DOCKER_HUB_USERNAME = "donalmun"
