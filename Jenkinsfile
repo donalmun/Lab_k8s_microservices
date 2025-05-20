@@ -23,8 +23,13 @@ pipeline {
                     // Tìm tất cả service có thay đổi
                     for (service in services) {
                         if (changedFiles.contains("/${service}/") || changedFiles.contains("${service}/")) {
+                            // Loại bỏ dấu cách ở đầu trước khi thêm service mới
+                            if (env.CHANGED_SERVICES.trim() == "") {
+                                env.CHANGED_SERVICES = service
+                            } else {
+                                env.CHANGED_SERVICES = env.CHANGED_SERVICES + " " + service
+                            }
                             echo "Changes detected in ${service}"
-                            env.CHANGED_SERVICES = env.CHANGED_SERVICES + " " + service
                         }
                     }
                     
@@ -35,7 +40,12 @@ pipeline {
                         
                         for (service in services) {
                             if (branchName.contains(service)) {
-                                env.CHANGED_SERVICES = env.CHANGED_SERVICES + " " + service
+                                // Loại bỏ dấu cách ở đầu trước khi thêm service mới
+                                if (env.CHANGED_SERVICES.trim() == "") {
+                                    env.CHANGED_SERVICES = service
+                                } else {
+                                    env.CHANGED_SERVICES = env.CHANGED_SERVICES + " " + service
+                                }
                                 echo "Branch name indicates changes in ${service}"
                             }
                         }
@@ -55,7 +65,6 @@ pipeline {
             }
         }
         
-        // Thay đổi đoạn find JAR file trong stage('Build Services')
         stage('Build Services') {
             steps {
                 script {
@@ -69,27 +78,36 @@ pipeline {
                         'visits-service': '8082'
                     ]
                     
-                    def changedServicesList = env.CHANGED_SERVICES.split(" ")
+                    // Đảm bảo không có phần tử rỗng trong danh sách service
+                    def changedServicesList = env.CHANGED_SERVICES.trim().split("\\s+").findAll { it && it.trim() != "" }
+                    echo "Services to build after filtering: ${changedServicesList.join(', ')}"
                     
                     // Nếu có thay đổi cụ thể, build từ source
-                    if (env.BUILD_ALL != "true") {
+                    if (env.BUILD_ALL != "true" && changedServicesList.size() > 0) {
                         echo "Building from source..."
                         // Build tất cả dự án từ thư mục gốc
                         sh "./mvnw clean package -DskipTests"
                         
                         for (service in changedServicesList) {
+                            if (service.trim() == "") {
+                                echo "Empty service name found, skipping"
+                                continue
+                            }
+                            
+                            echo "Processing service: '${service}'"
+                            
                             // Đường dẫn chính xác đến thư mục service
                             def serviceDir = "spring-petclinic-${service}"
                             def jarPath = "${serviceDir}/target"
                             
                             // Debug
                             sh "echo 'Looking for JAR files in ${jarPath}...'"
-                            sh "ls -la ${jarPath}/*.jar || echo 'No JAR files found'"
+                            sh "ls -la ${jarPath}/*.jar || echo 'No JAR files found in ${jarPath}'"
                             
                             // Tìm JAR file với tên chính xác
-                            def jarFile = sh(script: "find ${jarPath} -name '*.jar' ! -name '*original*' | head -1", returnStdout: true).trim()
+                            def jarFile = sh(script: "find ${jarPath} -name '*.jar' ! -name '*original*' | head -1 || echo ''", returnStdout: true).trim()
                             
-                            if (jarFile) {
+                            if (jarFile && jarFile != '') {
                                 echo "Found JAR file: ${jarFile}"
                                 // Copy to root with simple name for Docker build
                                 sh "cp ${jarFile} ${service}.jar"
@@ -124,13 +142,18 @@ pipeline {
                     ]
                     
                     // Process each service
-                    def changedServicesList = env.CHANGED_SERVICES.split(" ")
+                    def changedServicesList = env.CHANGED_SERVICES.trim().split("\\s+").findAll { it && it.trim() != "" }
                     
                     // Tạo các list để lưu các service và tag
                     def serviceList = []
                     def tagList = []
                     
                     for (service in changedServicesList) {
+                        if (service.trim() == "") {
+                            echo "Empty service name found, skipping"
+                            continue
+                        }
+                        
                         echo "Processing ${service}..."
                         
                         // Tag là commit ID
@@ -239,9 +262,11 @@ pipeline {
             steps {
                 script {
                     if (env.BUILD_ALL != "true") {
-                        def changedServicesList = env.CHANGED_SERVICES.split(" ")
+                        def changedServicesList = env.CHANGED_SERVICES.trim().split("\\s+").findAll { it && it.trim() != "" }
                         for (service in changedServicesList) {
-                            sh "rm -f ${service}.jar || true"
+                            if (service.trim() != "") {
+                                sh "rm -f ${service}.jar || true"
+                            }
                         }
                     }
                 }
