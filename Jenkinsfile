@@ -116,8 +116,9 @@ pipeline {
                     // Process each service
                     def changedServicesList = env.CHANGED_SERVICES.split(" ")
                     
-                    // Tạo một list JSON để lưu các service và tag
-                    def serviceTagList = []
+                    // Tạo các list để lưu các service và tag
+                    def serviceList = []
+                    def tagList = []
                     
                     for (service in changedServicesList) {
                         echo "Processing ${service}..."
@@ -162,13 +163,15 @@ pipeline {
                         }
                         
                         // Lưu service và tag để update Helm sau
-                        serviceTagList.add([service: service, tag: imageTag])
+                        serviceList.add(service)
+                        tagList.add(imageTag)
                         
                         echo "Successfully processed ${service}"
                     }
                     
-                    // Lưu danh sách service và tag để sử dụng ở stage tiếp theo
-                    env.SERVICE_TAG_JSON = groovy.json.JsonOutput.toJson(serviceTagList)
+                    // Lưu danh sách service và tag dạng chuỗi phân cách bằng dấu phẩy
+                    env.SERVICE_NAMES = serviceList.join(',')
+                    env.IMAGE_TAGS = tagList.join(',')
                 }
             }
         }
@@ -176,19 +179,12 @@ pipeline {
         stage('Update Helm Charts') {
             steps {
                 script {
-                    // Parse JSON string to list
-                    def serviceTagList = readJSON text: env.SERVICE_TAG_JSON
-                    
                     echo "Updating Helm charts for all processed services"
                     
-                    // Tạo một parameter đặc biệt để update tất cả cùng lúc
-                    def allServiceParam = serviceTagList.collect { it.service }.join(',')
-                    def allTagParam = serviceTagList.collect { it.tag }.join(',')
-                    
-                    // Trigger job update helm với tất cả service và tag
+                    // Sử dụng biến môi trường đã lưu trước đó
                     build job: 'k8s_update_helm', parameters: [
-                        string(name: 'SERVICE_NAMES', value: allServiceParam),
-                        string(name: 'IMAGE_TAGS', value: allTagParam)
+                        string(name: 'SERVICE_NAMES', value: env.SERVICE_NAMES),
+                        string(name: 'IMAGE_TAGS', value: env.IMAGE_TAGS)
                     ]
                     
                     echo "Successfully triggered Helm update for all services"
