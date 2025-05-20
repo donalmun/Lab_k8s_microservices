@@ -1,7 +1,7 @@
 pipeline {
     agent {
         node {
-            label 'k8s_master'
+            label 'lab1_agent'
         }
     }
     
