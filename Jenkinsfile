@@ -59,7 +59,6 @@ pipeline {
         stage('Build Services') {
             steps {
                 script {
-                    // Maps services to their ports
                     def servicePorts = [
                         'admin-server': '9090',
                         'api-gateway': '8080',
@@ -74,21 +73,21 @@ pipeline {
                     
                     // Nếu có thay đổi cụ thể, build từ source
                     if (env.BUILD_ALL != "true") {
+                        echo "Building from source..."
+                        // Build tất cả dự án từ thư mục gốc
+                        sh "./mvnw clean package -DskipTests"
+                        
                         for (service in changedServicesList) {
-                            echo "Building ${service} from source..."
-                            
-                            // Compile service with Maven
-                            sh "./mvnw clean package -DskipTests"
-                            
-                            // Tìm JAR file cụ thể hơn và kiểm tra nó có tồn tại không
-                            def jarPath = "${WORKSPACE}/${service}/target"
+                            // Đường dẫn chính xác đến thư mục service
+                            def serviceDir = "spring-petclinic-${service}"
+                            def jarPath = "${serviceDir}/target"
                             
                             // Debug
                             sh "echo 'Looking for JAR files in ${jarPath}...'"
                             sh "ls -la ${jarPath}/*.jar || echo 'No JAR files found'"
                             
-                            // Tìm JAR file với tên cụ thể
-                            def jarFile = sh(script: "find ${jarPath} -name '${service}-*.jar' -not -name '*original*' | head -1", returnStdout: true).trim()
+                            // Tìm JAR file với tên chính xác
+                            def jarFile = sh(script: "find ${jarPath} -name '*.jar' ! -name '*original*' | head -1", returnStdout: true).trim()
                             
                             if (jarFile) {
                                 echo "Found JAR file: ${jarFile}"
