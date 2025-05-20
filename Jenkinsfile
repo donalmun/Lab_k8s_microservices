@@ -55,6 +55,7 @@ pipeline {
             }
         }
         
+        // Thay đổi đoạn find JAR file trong stage('Build Services')
         stage('Build Services') {
             steps {
                 script {
@@ -81,13 +82,20 @@ pipeline {
                                 sh "./mvnw clean package -DskipTests"
                             }
                             
-                            // Find JAR file - sử dụng đường dẫn tương đối
-                            def jarFile = sh(script: "find ${service}/target -name '*.jar' | grep -v original | head -1", returnStdout: true).trim()
+                            // Tìm JAR file cụ thể hơn - đảm bảo đường dẫn tương đối chính xác
+                            sh """
+                                echo "Looking for JAR file in ${service}/target..."
+                                ls -la ${service}/target/*.jar || echo "No JAR files found"
+                            """
                             
-                            if (jarFile) {
-                                echo "Found JAR file: ${jarFile}"
+                            // Sử dụng cách tìm JAR khác, chỉ định đường dẫn chính xác hơn
+                            def jarPath = "${service}/target"
+                            def jarName = sh(script: "ls -1 ${jarPath}/${service}-*.jar 2>/dev/null | grep -v original || echo ''", returnStdout: true).trim()
+                            
+                            if (jarName) {
+                                echo "Found JAR file: ${jarName}"
                                 // Copy to root with simple name for Docker build
-                                sh "cp ${jarFile} ${service}.jar"
+                                sh "cp ${jarName} ${service}.jar"
                             } else {
                                 error "Could not find JAR file for ${service}. Build may have failed."
                             }
