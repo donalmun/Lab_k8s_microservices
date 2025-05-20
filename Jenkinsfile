@@ -41,9 +41,10 @@ pipeline {
                         }
                     }
                     
-                    // Nếu vẫn không tìm thấy service nào, báo lỗi
+                    // Nếu vẫn không tìm thấy service nào, sử dụng tất cả services
                     if (env.CHANGED_SERVICES.trim() == "") {
-                        error "Could not determine which service(s) changed. Please include service name in branch name or modify specific service files."
+                        echo "No specific service detected, using ALL services with commit tag ${GIT_COMMIT_SHORT}"
+                        env.CHANGED_SERVICES = services.join(" ")
                     }
                     
                     echo "Will build images for: ${env.CHANGED_SERVICES}"
