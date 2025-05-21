@@ -67,7 +67,7 @@ pipeline {
         
         stage('Build Services') {
             steps {
-                script {
+                    script {
                     def servicePorts = [
                         'admin-server': '9090',
                         'api-gateway': '8080',
@@ -111,7 +111,7 @@ pipeline {
                                 echo "Found JAR file: ${jarFile}"
                                 // Copy to root with simple name for Docker build
                                 sh "cp ${jarFile} ${service}.jar"
-                            } else {
+                        } else {
                                 error "Could not find JAR file for ${service}. Build may have failed."
                             }
                         }
