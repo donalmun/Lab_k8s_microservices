@@ -9,6 +9,8 @@ pipeline {
         DOCKER_HUB_USERNAME = "donalmun"
         DOCKER_HUB_CREDS = credentials('dockerhub')
         GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        // Thêm biến phát hiện tag release
+        GIT_TAG = sh(script: "git describe --tags --exact-match || true", returnStdout: true).trim()
     }
     
     stages {
@@ -111,7 +113,9 @@ pipeline {
                                 echo "Found JAR file: ${jarFile}"
                                 // Copy to root with simple name for Docker build
                                 sh "cp ${jarFile} ${service}.jar"
-                        } else {
+                                // Debug: Kiểm tra file JAR đã được copy chưa
+                                sh "ls -l ${service}.jar || echo 'JAR file not copied correctly'"
+                            } else {
                                 error "Could not find JAR file for ${service}. Build may have failed."
                             }
                         }
@@ -148,6 +152,27 @@ pipeline {
                     def serviceList = []
                     def tagList = []
                     
+                    // Phát hiện nếu là tag release (v1.2.3) hoặc branch release (rc_v1.2.3)
+                    def isReleaseTag = (env.GIT_TAG && env.GIT_TAG.startsWith("v"))
+                    def branchName = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+                    def isReleaseBranch = branchName.startsWith("rc_v")
+                    
+                    // Xác định tag image dựa vào loại build
+                    def imageTag = "${GIT_COMMIT_SHORT}" // Mặc định là commit ID
+                    if (isReleaseTag) {
+                        imageTag = env.GIT_TAG // Nếu là tag release, dùng tag đó
+                        echo "Detected release tag: ${imageTag}"
+                    } else if (isReleaseBranch) {
+                        imageTag = branchName.replace("rc_", "") // Nếu là branch rc_v1.2.3, dùng v1.2.3
+                        echo "Detected release branch: ${branchName}, using tag: ${imageTag}"
+                    }
+                    
+                    // Xác định nếu cần tag latest (chỉ khi branch main và không phải release)
+                    def needsLatestTag = (branchName == 'main' && !isReleaseTag && !isReleaseBranch)
+                    
+                    // Lưu thông tin để update Helm chart sau
+                    env.IS_RELEASE = (isReleaseTag || isReleaseBranch) ? "true" : "false"
+                    
                     for (service in changedServicesList) {
                         if (service.trim() == "") {
                             echo "Empty service name found, skipping"
@@ -156,12 +181,10 @@ pipeline {
                         
                         echo "Processing ${service}..."
                         
-                        // Tag là commit ID
-                        def imageTag = "${GIT_COMMIT_SHORT}"
-                        
-                        // Branch main cũng cần tag latest
-                        def branchName = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
-                        def needsLatestTag = (branchName == 'main')
+                        // Debug: Kiểm tra file JAR trước khi build Docker
+                        if (env.BUILD_ALL != "true") {
+                            sh "ls -l ${service}.jar || echo 'JAR file not found before Docker build'"
+                        }
                         
                         // Nếu có thay đổi cụ thể, build từ source với Dockerfile
                         if (env.BUILD_ALL != "true") {
@@ -186,18 +209,18 @@ pipeline {
                                 sh "docker pull springcommunity/spring-petclinic-${service}"
                                 sh "docker tag springcommunity/spring-petclinic-${service} ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
                             } else {
-                                // Nếu tìm thấy trong repo cá nhân, tag lại với commit ID mới
+                                // Nếu tìm thấy trong repo cá nhân, tag lại với tag mới
                                 echo "Found existing image in personal repo, re-tagging"
                                 sh "docker tag ${DOCKER_HUB_USERNAME}/${service}:latest ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
                             }
                         }
                         
-                        // Nếu là branch main, tag thêm latest
+                        // Nếu là branch main và không phải release, tag thêm latest
                         if (needsLatestTag) {
                             sh "docker tag ${DOCKER_HUB_USERNAME}/${service}:${imageTag} ${DOCKER_HUB_USERNAME}/${service}:latest"
                         }
                         
-                        // Push image với tag commit ID
+                        // Push image với tag xác định
                         sh "docker push ${DOCKER_HUB_USERNAME}/${service}:${imageTag}"
                         
                         // Push image với tag latest nếu cần
@@ -239,17 +262,23 @@ pipeline {
                         
                         // Kiểm tra xem có service nào để cập nhật không
                         if (serviceNames.size() > 0) {
-                            echo "Updating Helm charts for these services: ${env.SERVICE_NAMES}"
+                            // Xác định values file dựa vào loại build
+                            def isRelease = (env.IS_RELEASE == "true")
+                            def valuesFile = isRelease ? "values-staging.yaml" : "values-dev.yaml"
+                            def namespace = isRelease ? "staging" : "dev"
+                            
+                            echo "Updating Helm charts for these services: ${env.SERVICE_NAMES} with tags: ${env.IMAGE_TAGS} in ${valuesFile} (namespace: ${namespace})"
                             
                             // Kích hoạt job nhưng không chờ nó hoàn thành
                             build job: 'k8s_update_helm', 
                                 wait: false,
                                 parameters: [
                                     string(name: 'SERVICE_NAMES', value: env.SERVICE_NAMES),
-                                    string(name: 'IMAGE_TAGS', value: env.IMAGE_TAGS)
+                                    string(name: 'IMAGE_TAGS', value: env.IMAGE_TAGS),
+                                    string(name: 'VALUES_FILE', value: valuesFile)
                                 ]
                             
-                            echo "Triggered Helm update job - continuing without waiting"
+                            echo "Triggered Helm update job for ${namespace} environment - continuing without waiting"
                         } else {
                             echo "No services to update. Skipping Helm chart update."
                         }
