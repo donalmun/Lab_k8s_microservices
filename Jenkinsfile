@@ -1,19 +1,33 @@
 pipeline {
-    agent {
-        node {
-            label 'lab1_agent'
-        }
-    }
-    
+    agent { node { label 'lab1_agent' } }
+
+    /* Giữ lại ONLY những biến tĩnh, không chạy lệnh shell ở đây */
     environment {
-        DOCKER_HUB_USERNAME = "donalmun"
-        DOCKER_HUB_CREDS = credentials('dockerhub')
-        GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-        // Thêm biến phát hiện tag release
-        GIT_TAG = sh(script: "git describe --tags --exact-match || true", returnStdout: true).trim()
+        DOCKER_HUB_USERNAME = 'donalmun'
+        DOCKER_HUB_CREDS    = credentials('dockerhub')
     }
-    
+
     stages {
+
+        stage('Init Vars') {
+            steps {
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: "git rev-parse --short HEAD", returnStdout: true
+                    ).trim()
+
+                    env.GIT_TAG = sh(
+                        script: "git describe --tags --exact-match || true",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "BRANCH_NAME=${env.BRANCH_NAME}"
+                    echo "GIT_TAG=${env.GIT_TAG}"
+                    echo "GIT_COMMIT_SHORT=${env.GIT_COMMIT_SHORT}"
+                }
+            }
+        }
+
         stage('Detect Changed Services') {
             steps {
                 script {
