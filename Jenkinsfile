@@ -17,7 +17,7 @@ pipeline {
         stage('Detect Changed Services') {
             steps {
                 script {
-                    def services = ['admin-server', 'api-gateway', 'config-server', 'customers-service', 'discovery-server', 'vets-service', 'visits-service', 'grafana-server', 'prometheus']
+                    def services = ['admin-server', 'api-gateway', 'config-server', 'customers-service', 'discovery-server', 'vets-service', 'visits-service']
                     def changedFiles = sh(script: "git diff-tree --no-commit-id --name-only -r HEAD", returnStdout: true).trim()
                     
                     env.CHANGED_SERVICES = ""
@@ -77,9 +77,7 @@ pipeline {
                         'customers-service': '8081',
                         'discovery-server': '8761',
                         'vets-service': '8083',
-                        'visits-service': '8082',
-                        'grafana-server': '3030',
-                        'prometheus': '9091'
+                        'visits-service': '8082'
                     ]
                     
                     // Đảm bảo không có phần tử rỗng trong danh sách service
@@ -144,9 +142,7 @@ pipeline {
                         'customers-service': '8081',
                         'discovery-server': '8761',
                         'vets-service': '8083',
-                        'visits-service': '8082',
-                        'grafana-server': '3030',
-                        'promethues-server': '9091'
+                        'visits-service': '8082'
                     ]
                     
                     // Process each service
